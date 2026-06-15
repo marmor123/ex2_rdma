@@ -1,0 +1,23 @@
+# Binaries
+server
+client
+*.o
+*.out
+
+# Archives
+*.tgz
+*.tar.gz
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.log
