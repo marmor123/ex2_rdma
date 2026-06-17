@@ -80,14 +80,10 @@ static double run_measurement(struct pingpong_context *ctx,
 	remaining = warmup_count;
 	while (remaining > 0) {
 		batch = pp_min(remaining, tx_depth);
-		for (j = 0; j < batch; j++) {
-			int flags = (j == batch - 1) ? IBV_SEND_SIGNALED : 0;
-			if (unlikely(pp_post_send(ctx, size, IBV_WR_RDMA_WRITE,
-						  flags,
-						  rem_dest->remote_addr,
-						  rem_dest->rkey)))
-				return -1.0;
-		}
+		if (unlikely(pp_post_send_batch(ctx, size, IBV_WR_RDMA_WRITE,
+						rem_dest->remote_addr,
+						rem_dest->rkey, batch, 0)))
+			return -1.0;
 		remaining -= batch;
 		if (remaining > 0)
 			if (unlikely(pp_wait_completions(ctx, 1)))
@@ -104,16 +100,11 @@ static double run_measurement(struct pingpong_context *ctx,
 	remaining = msg_count;
 	while (remaining > 0) {
 		batch = pp_min(remaining, tx_depth);
-		for (j = 0; j < batch; j++) {
-			int flags = inline_flag;
-			if (j == batch - 1)
-				flags |= IBV_SEND_SIGNALED;
-			if (unlikely(pp_post_send(ctx, size, IBV_WR_RDMA_WRITE,
-						  flags,
-						  rem_dest->remote_addr,
-						  rem_dest->rkey)))
-				return -1.0;
-		}
+		if (unlikely(pp_post_send_batch(ctx, size, IBV_WR_RDMA_WRITE,
+						rem_dest->remote_addr,
+						rem_dest->rkey, batch,
+						inline_flag)))
+			return -1.0;
 		remaining -= batch;
 		if (remaining > 0)
 			if (unlikely(pp_wait_completions(ctx, 1)))
@@ -135,7 +126,9 @@ static double run_measurement(struct pingpong_context *ctx,
 		return -1.0;
 
 	/* re-post one recv buffer for next iteration */
-	ctx->routs += pp_post_recv(ctx, 1);
+	if (unlikely(pp_post_recv(ctx, 1) != 1))
+		return -1.0;
+	ctx->routs++;
 
 	if (unlikely(clock_gettime(CLOCK_MONOTONIC, &stop)))
 		return -1.0;
@@ -270,6 +263,10 @@ int main(int argc, char *argv[])
 	/* ---- TCP out-of-band exchange, connect QP ---- */
 	rem_dest = pp_client_exch_dest(servername, port, &my_dest);
 	if (!rem_dest)
+		return 1;
+
+	/* transition QP INIT → RTR → RTS */
+	if (pp_connect_ctx(ctx, ib_port, my_dest.psn, mtu, sl, rem_dest, gidx))
 		return 1;
 
 	/* ---- discover device limits ---- */

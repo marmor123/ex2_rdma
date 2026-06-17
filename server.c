@@ -150,7 +150,9 @@ int main(int argc, char *argv[])
 			return 1;
 
 		/* 5. re-post one recv buffer for the next iteration */
-		ctx->routs += pp_post_recv(ctx, 1);
+		if (pp_post_recv(ctx, 1) != 1)
+			return 1;
+		ctx->routs++;
 	}
 
 	/* ---- teardown ---- */

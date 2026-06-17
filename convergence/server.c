@@ -133,24 +133,26 @@ int main(int argc, char *argv[])
 	if (!rem_dest)
 		return 1;
 
-	/* ---- throughput loop: 21 sizes (powers of two) ---- */
-	for (i = 0; i < 21; i++) {
-		/* 2. wait for RECV completion (client data) */
+	/* ---- throughput loop: run until client disconnects ---- */
+	for (;;) {
+		/* wait for RECV completion (client data) */
 		if (pp_wait_completions(ctx, 1))
-			return 1;
+			break;
 
-		/* 3. send 8-byte inline ACK */
+		/* send 8-byte inline ACK */
 		if (pp_post_send(ctx, 8, IBV_WR_SEND,
 				 IBV_SEND_SIGNALED | IBV_SEND_INLINE,
 				 0, 0))
-			return 1;
+			break;
 
-		/* 4. wait for SEND completion */
+		/* wait for SEND completion */
 		if (pp_wait_completions(ctx, 1))
-			return 1;
+			break;
 
-		/* 5. re-post one recv buffer for the next iteration */
-		ctx->routs += pp_post_recv(ctx, 1);
+		/* re-post one recv buffer for the next iteration */
+		if (pp_post_recv(ctx, 1) != 1)
+			break;
+		ctx->routs++;
 	}
 
 	/* ---- teardown ---- */

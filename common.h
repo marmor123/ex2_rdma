@@ -122,6 +122,8 @@ static inline struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev,
 	if (!ctx->buf)
 		goto err_cleanup;
 
+	memset(ctx->buf, 0, MAX_SIZE);
+
 	ctx->context = ibv_open_device(ib_dev);
 	if (!ctx->context)
 		goto err_cleanup;
@@ -316,6 +318,54 @@ static inline int pp_post_send(struct pingpong_context *ctx, int size,
 	wr.wr.rdma.rkey = rkey;
 
 	return ibv_post_send(ctx->qp, &wr, &bad_wr) ? -1 : 0;
+}
+
+/*
+ * Post a batch of identical WRs as a linked list — single doorbell.
+ * Only the last WR in the chain is signaled; earlier WRs inherit
+ * @base_flags (typically 0 or IBV_SEND_INLINE).
+ */
+static inline int pp_post_send_batch(struct pingpong_context *ctx,
+				      int size, enum ibv_wr_opcode opcode,
+				      uint64_t remote_addr, uint32_t rkey,
+				      int count, int base_flags)
+{
+	struct ibv_send_wr *bad_wr;
+	int j;
+
+	if (unlikely(count <= 0))
+		return 0;
+
+	/* VLAs are fine on Ubuntu/GCC — tx_depth is bounded by HCA caps */
+	struct ibv_send_wr wrs[count];
+	struct ibv_sge      sges[count];
+
+	for (j = 0; j < count; j++) {
+		sges[j] = (struct ibv_sge){
+			.addr   = (uintptr_t)ctx->buf,
+			.length = size,
+			.lkey   = ctx->mr->lkey
+		};
+
+		int flags = base_flags;
+		if (j == count - 1)
+			flags |= IBV_SEND_SIGNALED;
+
+		wrs[j] = (struct ibv_send_wr){
+			.wr_id      = PINGPONG_SEND_WRID,
+			.sg_list    = &sges[j],
+			.num_sge    = 1,
+			.opcode     = opcode,
+			.send_flags = flags,
+			.next       = (j + 1 < count) ? &wrs[j + 1] : NULL,
+			.wr.rdma    = {
+				.remote_addr = remote_addr,
+				.rkey        = rkey
+			}
+		};
+	}
+
+	return ibv_post_send(ctx->qp, &wrs[0], &bad_wr) ? -1 : 0;
 }
 
 static inline int pp_post_recv(struct pingpong_context *ctx, int n)

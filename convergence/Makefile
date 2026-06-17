@@ -1,7 +1,7 @@
 .PHONY: all clean
 
 CFLAGS  = -O3 -march=native -funroll-loops -DNDEBUG
-LDFLAGS = -libverbs
+LDFLAGS = -libverbs -lm
 INCLUDES = -I..
 
 all: server client

@@ -27,7 +27,7 @@
 /* Conservative MSG_COUNT used while converging the warmup parameter */
 #define CONSERVATIVE_MSG_COUNT 100000
 /* Safety cap to avoid infinite loops */
-#define MAX_CONVERGE_ITERS 30
+#define MAX_CONVERGE_ITERS 25
 
 /* ---- helpers ----------------------------------------------------------- */
 
@@ -70,13 +70,10 @@ static double run_measurement(struct pingpong_context *ctx,
 	remaining = warmup_count;
 	while (remaining > 0) {
 		batch = pp_min(remaining, tx_depth);
-		for (j = 0; j < batch; j++) {
-			int flags = (j == batch - 1) ? IBV_SEND_SIGNALED : 0;
-			if (pp_post_send(ctx, size, IBV_WR_RDMA_WRITE, flags,
-					 rem_dest->remote_addr,
-					 rem_dest->rkey))
-				return -1.0;
-		}
+		if (pp_post_send_batch(ctx, size, IBV_WR_RDMA_WRITE,
+				       rem_dest->remote_addr,
+				       rem_dest->rkey, batch, 0))
+			return -1.0;
 		remaining -= batch;
 		if (remaining > 0)
 			if (pp_wait_completions(ctx, 1))
@@ -93,15 +90,10 @@ static double run_measurement(struct pingpong_context *ctx,
 	remaining = msg_count;
 	while (remaining > 0) {
 		batch = pp_min(remaining, tx_depth);
-		for (j = 0; j < batch; j++) {
-			int flags = inline_flag;
-			if (j == batch - 1)
-				flags |= IBV_SEND_SIGNALED;
-			if (pp_post_send(ctx, size, IBV_WR_RDMA_WRITE, flags,
-					 rem_dest->remote_addr,
-					 rem_dest->rkey))
-				return -1.0;
-		}
+		if (pp_post_send_batch(ctx, size, IBV_WR_RDMA_WRITE,
+				       rem_dest->remote_addr,
+				       rem_dest->rkey, batch, inline_flag))
+			return -1.0;
 		remaining -= batch;
 		if (remaining > 0)
 			if (pp_wait_completions(ctx, 1))
@@ -123,7 +115,9 @@ static double run_measurement(struct pingpong_context *ctx,
 		return -1.0;
 
 	/* re-post one recv buffer for next iteration */
-	ctx->routs += pp_post_recv(ctx, 1);
+	if (pp_post_recv(ctx, 1) != 1)
+		return -1.0;
+	ctx->routs++;
 
 	if (clock_gettime(CLOCK_MONOTONIC, &stop))
 		return -1.0;
@@ -343,6 +337,12 @@ int main(int argc, char *argv[])
 	rem_dest = pp_client_exch_dest(servername, port, &my_dest);
 	if (!rem_dest) {
 		fprintf(stderr, "pp_client_exch_dest failed\n");
+		return 1;
+	}
+
+	/* transition QP INIT → RTR → RTS */
+	if (pp_connect_ctx(ctx, ib_port, my_dest.psn, mtu, sl, rem_dest, gidx)) {
+		fprintf(stderr, "pp_connect_ctx failed\n");
 		return 1;
 	}
 
